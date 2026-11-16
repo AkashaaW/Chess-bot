@@ -5,6 +5,7 @@ import chess
 import pygame
 
 from bot import BotJob
+from scores import POINTS, ScoreHistory
 
 SQUARE_SIZE = 80
 BOARD_PIXELS = SQUARE_SIZE * 8
@@ -37,6 +38,16 @@ START_COLOR = (70, 130, 200)
 
 OVERLAY_COLOR = (0, 0, 0, 160)
 PANEL_COLOR = (49, 46, 43)
+SCORE_MUTED = (210, 206, 202)
+SCORE_ROW = (63, 59, 55)
+SCORE_ACCENT = (172, 217, 126)
+SCORE_BACK_RECT = pygame.Rect(48, 590, 104, 42)
+SCORE_NEWER_RECT = pygame.Rect(344, 590, 112, 42)
+SCORE_OLDER_RECT = pygame.Rect(468, 590, 124, 42)
+SCORES_PER_PAGE = 8
+RESULT_PANEL = pygame.Rect(150, 190, 340, 260)
+NEW_GAME_RECT = pygame.Rect(190, 300, 260, 52)
+RESULT_MENU_RECT = pygame.Rect(190, 368, 260, 52)
 
 WHITE_PIECE_FILL = (250, 250, 250)
 WHITE_PIECE_TEXT = (30, 30, 30)
@@ -58,7 +69,7 @@ PAUSE_RECT = pygame.Rect(
 
 # ------------------------------------------------------------ menus
 def build_menu_rects():
-    """Return ({difficulty: Rect}, start_rect), centered."""
+    """Return centered difficulty, Start, and Scoreboard buttons."""
     button_w, button_h, gap = 240, 56, 18
     x = (WINDOW_WIDTH - button_w) // 2
     y = 230
@@ -68,7 +79,10 @@ def build_menu_rects():
         difficulty_rects[name] = rect
         y += button_h + gap
     start_rect = pygame.Rect(x, y + 30, button_w, button_h + 4)
-    return difficulty_rects, start_rect
+    scoreboard_rect = pygame.Rect(
+        x, start_rect.bottom + gap, button_w, button_h,
+    )
+    return difficulty_rects, start_rect, scoreboard_rect
 
 
 def build_pause_rects():
@@ -94,7 +108,7 @@ def draw_button(screen, rect, text, color, font):
 
 
 def draw_menu(screen, title_font, button_font, difficulty,
-              difficulty_rects, start_rect):
+              difficulty_rects, start_rect, scoreboard_rect):
     screen.fill(MENU_BG)
     mid_x = WINDOW_WIDTH // 2
 
@@ -112,6 +126,7 @@ def draw_menu(screen, title_font, button_font, difficulty,
         draw_button(screen, rect, name, color, button_font)
 
     draw_button(screen, start_rect, "Start", START_COLOR, button_font)
+    draw_button(screen, scoreboard_rect, "Scoreboard", BUTTON_COLOR, button_font)
 
 
 def draw_pause_menu(screen, button_font, panel, pause_rects):
@@ -132,6 +147,73 @@ def draw_pause_menu(screen, button_font, panel, pause_rects):
         else:
             color = BUTTON_COLOR
         draw_button(screen, rect, name, color, button_font)
+
+
+def score_page_after_scroll(page, step, game_count):
+    last_page = max(0, (game_count - 1) // SCORES_PER_PAGE)
+    return max(0, min(page + step, last_page))
+
+
+def draw_scoreboard(screen, title_font, status_font, history, page):
+    screen.fill(MENU_BG)
+    mid_x = WINDOW_WIDTH // 2
+    title = title_font.render("Scoreboard", True, MENU_TITLE)
+    screen.blit(title, title.get_rect(center=(mid_x, 64)))
+
+    totals, points = history.totals()
+    stats = (
+        ("Wins", totals["win"]), ("Draws", totals["draw"]),
+        ("Losses", totals["loss"]), ("Points", f"{points:g}"),
+    )
+    for index, (name, value) in enumerate(stats):
+        x = 104 + 144 * index
+        label = status_font.render(name, True, SCORE_MUTED)
+        count = status_font.render(str(value), True, SCORE_ACCENT)
+        screen.blit(label, label.get_rect(center=(x, 128)))
+        screen.blit(count, count.get_rect(center=(x, 158)))
+
+    games = history.games
+    if games:
+        columns = (62, 228, 372, 499)
+        for name, x in zip(("Date", "Difficulty", "Result", "Points"), columns):
+            screen.blit(status_font.render(name, True, SCORE_MUTED), (x, 200))
+
+        end = len(games) - page * SCORES_PER_PAGE
+        page_games = reversed(games[max(0, end - SCORES_PER_PAGE):end])
+        for index, saved in enumerate(page_games):
+            y = 237 + 38 * index
+            if index % 2 == 0:
+                pygame.draw.rect(screen, SCORE_ROW, (48, y - 3, 544, 32), border_radius=6)
+            result = saved["result"]
+            values = (saved["date"][:10], saved["difficulty"], result.title(), f"{POINTS[result]:g}")
+            for value, x in zip(values, columns):
+                screen.blit(status_font.render(value, True, MENU_TITLE), (x, y))
+
+        last_page = (len(games) - 1) // SCORES_PER_PAGE
+        page_caption = status_font.render(f"Page {page + 1} of {last_page + 1}", True, SCORE_MUTED)
+        screen.blit(page_caption, page_caption.get_rect(center=(247, 611)))
+        if page > 0:
+            draw_button(screen, SCORE_NEWER_RECT, "Newer", BUTTON_COLOR, status_font)
+        if page < last_page:
+            draw_button(screen, SCORE_OLDER_RECT, "Older", BUTTON_COLOR, status_font)
+    elif not history.error:
+        empty = status_font.render("No completed games yet", True, SCORE_MUTED)
+        screen.blit(empty, empty.get_rect(center=(mid_x, 340)))
+
+    if history.error:
+        error = status_font.render(history.error, True, SCORE_ACCENT)
+        screen.blit(error, error.get_rect(center=(mid_x, 554)))
+    draw_button(screen, SCORE_BACK_RECT, "Back", BUTTON_COLOR, status_font)
+
+
+def record_finished_game(board, difficulty, history):
+    outcome = board.outcome()
+    if outcome is None:
+        return
+    winner = outcome.winner
+    result = "draw" if winner is None else ("win" if winner == PLAYER_COLOR else "loss")
+    history.record(difficulty, result)
+    return outcome
 
 
 # ------------------------------------------------------------ board
@@ -270,14 +352,31 @@ def status_text(board, paused):
     return text
 
 
-def draw_status(screen, board, status_font, paused):
+def draw_status(screen, board, status_font, paused, score_pending=False, finished=False):
     bar = pygame.Rect(0, BOARD_PIXELS, WINDOW_WIDTH, STATUS_HEIGHT)
     pygame.draw.rect(screen, STATUS_BG, bar)
     text = status_text(board, paused)
+    if score_pending:
+        text = "Score not saved. Open Scoreboard to retry."
     label = status_font.render(text, True, STATUS_TEXT)
     pos = (12, BOARD_PIXELS + STATUS_HEIGHT // 2)
     screen.blit(label, label.get_rect(midleft=pos))
-    draw_button(screen, PAUSE_RECT, "Pause", BUTTON_COLOR, status_font)
+    if not finished:
+        draw_button(screen, PAUSE_RECT, "Pause", BUTTON_COLOR, status_font)
+
+
+def draw_result_menu(screen, board, button_font):
+    shade = pygame.Surface((BOARD_PIXELS, BOARD_PIXELS), pygame.SRCALPHA)
+    shade.fill(OVERLAY_COLOR)
+    screen.blit(shade, (0, 0))
+    pygame.draw.rect(screen, PANEL_COLOR, RESULT_PANEL, border_radius=14)
+
+    winner = board.outcome().winner
+    result = "Draw" if winner is None else ("You win!" if winner == PLAYER_COLOR else "You lose")
+    label = button_font.render(result, True, MENU_TITLE)
+    screen.blit(label, label.get_rect(center=(RESULT_PANEL.centerx, 247)))
+    draw_button(screen, NEW_GAME_RECT, "New Game", START_COLOR, button_font)
+    draw_button(screen, RESULT_MENU_RECT, "Main Menu", BUTTON_COLOR, button_font)
 
 
 # ------------------------------------------------------------ main
@@ -293,10 +392,12 @@ def main():
     title_font = pygame.font.SysFont("arial", 56, bold=True)
     button_font = pygame.font.SysFont("arial", 28, bold=True)
 
-    difficulty_rects, start_rect = build_menu_rects()
+    difficulty_rects, start_rect, scoreboard_rect = build_menu_rects()
     pause_panel, pause_rects = build_pause_rects()
 
-    state = "menu"        # "menu", "game", or "paused"
+    state = "menu"        # "menu", "game", "paused", "finished", or "scoreboard"
+    history = ScoreHistory()
+    score_page = 0
     difficulty = "Easy"   # the selected difficulty is stored here
 
     board = chess.Board()
@@ -310,6 +411,18 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+                break
+
+            elif state == "scoreboard" and event.type == pygame.MOUSEWHEEL:
+                score_page = score_page_after_scroll(score_page, -event.y, len(history.games))
+
+            elif state == "scoreboard" and event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    state = "menu"
+                elif event.key in (pygame.K_UP, pygame.K_PAGEUP):
+                    score_page = score_page_after_scroll(score_page, -1, len(history.games))
+                elif event.key in (pygame.K_DOWN, pygame.K_PAGEDOWN):
+                    score_page = score_page_after_scroll(score_page, 1, len(history.games))
 
             elif (event.type == pygame.MOUSEBUTTONDOWN
                     and event.button == 1):
@@ -326,6 +439,30 @@ def main():
                         targets = {}
                         bot_job = None
                         state = "game"
+                    elif scoreboard_rect.collidepoint(pos):
+                        history.refresh()
+                        score_page = 0
+                        state = "scoreboard"
+                    continue
+
+                if state == "scoreboard":
+                    if SCORE_BACK_RECT.collidepoint(pos):
+                        state = "menu"
+                    elif SCORE_NEWER_RECT.collidepoint(pos):
+                        score_page = score_page_after_scroll(score_page, -1, len(history.games))
+                    elif SCORE_OLDER_RECT.collidepoint(pos):
+                        score_page = score_page_after_scroll(score_page, 1, len(history.games))
+                    continue
+
+                if state == "finished":
+                    if NEW_GAME_RECT.collidepoint(pos):
+                        board = chess.Board()
+                        selected = None
+                        targets = {}
+                        bot_job = None
+                        state = "game"
+                    elif RESULT_MENU_RECT.collidepoint(pos):
+                        state = "menu"
                     continue
 
                 # ---------- pause menu ----------
@@ -362,6 +499,8 @@ def main():
 
                 if selected is not None and square in targets:
                     board.push(targets[square])
+                    if record_finished_game(board, difficulty, history) is not None:
+                        state = "finished"
                     selected = None
                     targets = {}
                 elif square == selected:
@@ -376,10 +515,15 @@ def main():
                         selected = None
                         targets = {}
 
+        if not running:
+            break
+
         # ---------- update + draw ----------
         if state == "menu":
             draw_menu(screen, title_font, button_font, difficulty,
-                      difficulty_rects, start_rect)
+                      difficulty_rects, start_rect, scoreboard_rect)
+        elif state == "scoreboard":
+            draw_scoreboard(screen, title_font, status_font, history, score_page)
         else:
             # The bot only starts or finishes a move in "game" state,
             # so a result that arrives during a pause is held.
@@ -398,14 +542,19 @@ def main():
                         bot_job = None
                         if move is not None and move in board.legal_moves:
                             board.push(move)
+                            if record_finished_game(board, difficulty, history) is not None:
+                                state = "finished"
 
             draw_board(screen)
             draw_selected(screen, selected)
             draw_pieces(screen, board, font, images)
             draw_move_hints(screen, board, targets)
             paused = state == "paused"
-            draw_status(screen, board, status_font, paused)
-            if paused:
+            finished = state == "finished"
+            draw_status(screen, board, status_font, paused, bool(history.pending), finished)
+            if finished:
+                draw_result_menu(screen, board, button_font)
+            elif paused:
                 draw_pause_menu(
                     screen, button_font, pause_panel, pause_rects)
 
